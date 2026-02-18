@@ -52,13 +52,13 @@ jobs:
         run: |
           # Set up SSH key
           mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          printf '%s' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
-          # Deploy files via SCP
           scp -i ~/.ssh/deploy_key -r index.html style.css app.js \
-            $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/
+          "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+
 
           echo "✅ Deployed to $DEPLOY_HOST:$DEPLOY_PATH"
 
