@@ -1,0 +1,100 @@
+name: Deploy to Environment
+
+on:
+  push:
+    branches:
+      - dev
+      - staging
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    # Map branches to GitHub Environments
+    environment: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'dev' && 'development' || 'staging' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Display deployment info
+        run: |
+          echo "🚀 Deploying to: ${{ vars.SITE_TITLE }}"
+          echo "📂 Deploy path: ${{ vars.DEPLOY_PATH }}"
+          echo "🎨 Site color: ${{ vars.SITE_COLOR }}"
+          echo "🌿 Branch: ${{ github.ref_name }}"
+          echo "🔑 SSH Key loaded: ${{ secrets.SSH_PRIVATE_KEY != '' }}"
+
+      - name: Replace placeholders with environment values
+        run: |
+          DEPLOY_TIME=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          COMMIT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+
+          sed -i "s|__SITE_TITLE__|${{ vars.SITE_TITLE }}|g" index.html
+          sed -i "s|__SITE_COLOR__|${{ vars.SITE_COLOR }}|g" style.css
+          sed -i "s|__DEPLOY_TIME__|${DEPLOY_TIME}|g" index.html
+          sed -i "s|__COMMIT_SHA__|${COMMIT_SHA}|g" index.html
+          sed -i "s|__SITE_TITLE__|${{ vars.SITE_TITLE }}|g" app.js
+          sed -i "s|__DEPLOY_TIME__|${DEPLOY_TIME}|g" app.js
+
+          echo "✅ Placeholders replaced"
+
+      - name: Deploy to EC2 via SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+
+        run: |
+          set -Eeuxo pipefail
+          trap 'echo "❌ Failed at line $LINENO"; exit 1' ERR
+
+          # Clean environment variables (avoid hidden spaces/newlines)
+          DEPLOY_HOST="$(printf '%s' "$DEPLOY_HOST" | tr -d '\r\n ')"
+          DEPLOY_USER="$(printf '%s' "$DEPLOY_USER" | tr -d '\r\n ')"
+          DEPLOY_PATH="$(printf '%s' "$DEPLOY_PATH" | tr -d '\r\n')"
+
+          echo "DEPLOY_HOST=[$DEPLOY_HOST]"
+          echo "DEPLOY_USER=[$DEPLOY_USER]"
+          echo "DEPLOY_PATH=[$DEPLOY_PATH]"
+
+          # Setup SSH
+          mkdir -p ~/.ssh
+          printf '%s' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          # Add server fingerprint
+          ssh-keyscan -T 5 -H "$DEPLOY_HOST" | tee -a ~/.ssh/known_hosts
+
+          # Deploy files
+          scp -vvv -i ~/.ssh/deploy_key -r index.html style.css app.js \
+            "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+
+          echo "✅ Deployed successfully!"
+
+      - name: Verify deployment
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+
+        run: |
+          set -euxo pipefail
+
+          DEPLOY_HOST="$(printf '%s' "$DEPLOY_HOST" | tr -d '\r\n ')"
+          DEPLOY_USER="$(printf '%s' "$DEPLOY_USER" | tr -d '\r\n ')"
+          DEPLOY_PATH="$(printf '%s' "$DEPLOY_PATH" | tr -d '\r\n')"
+
+          mkdir -p ~/.ssh
+          printf '%s' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          ssh-keyscan -T 5 -H "$DEPLOY_HOST" | tee -a ~/.ssh/known_hosts
+
+          echo "🔍 Checking remote folder..."
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" "ls -la '$DEPLOY_PATH'"
+
+          echo "✅ Deployment verified!"
